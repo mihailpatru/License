@@ -1,0 +1,240 @@
+/*Metoda de invatare profunda pentru adnotarea datelor satelitare multisenzor
+Obiectivul proiectului consta in implementarea de catre student, in Pyhton, a unor
+retele neuronale convolutionale - DenseNet si ResNet, pentru clasificarea datelor satelitare
+multispectrale, multisenzor. Pentru testarea si validarea rezultatelor studentul va folosi
+setul de date SEN12MS.*/
+
+/* Codul e facut in google colab (python)
+Pasii pentru cod sunt in felul urmator:
+Încărcarea fisierelor (doar o arhiva) SEN12MS din folderul Data de pe Google Drive.
+Pregătiți datele pentru testare folosind aceleași pași ca pentru setul de date de antrenare și testare. Adică, încărcați imaginile, normalizați-le, redimensionați-le și extrageți etichetele. Asigurați-vă că rețineți imaginile și etichetele asociate pentru setul de date de testare separat.
+Încărcați modelele DenseNet și ResNet antrenate anterior.
+Folosiți modelele pentru a face predicții pe setul de date de testare.
+Calculați metricile de performanță, cum ar fi precizia, acuratețea și raportul de clasificare pentru a evalua performanța modelelor.*/
+
+
+
+!pip install tensorflow keras matplotlib
+
+from google.colab import drive
+drive.mount('/content/drive')
+
+import os
+os.chdir('/content/drive/My Drive/Date')
+
+import os
+from osgeo import gdal
+
+# specificați calea către folderul "Date"
+folder_path = "/content/drive/My Drive/Date"
+
+# parcurgeți toate fișierele TIFF din folderul "Date"
+for filename in os.listdir(folder_path):
+    if filename.endswith(".tif"):
+        # construiți calea către fișierul TIFF
+        file_path = os.path.join(folder_path, filename)
+
+        # deschideți fișierul TIFF și citiți datele
+        tiff = gdal.Open(file_path)
+        data = tiff.ReadAsArray()
+
+        # procesați datele cum doriți
+        # ...
+
+        print(f"Procesat {filename}")
+
+import os
+from PIL import Image
+
+data_path = '/content/drive/MyDrive/Date'
+image_size = (256, 256)
+
+valid_images = []
+invalid_images = []
+
+for filename in os.listdir(data_path):
+    if filename.endswith('.tif'):
+        try:
+            image = Image.open(os.path.join(data_path, filename)).resize(image_size)
+            valid_images.append(np.array(image))
+        except Exception as e:
+            print(f"Error while processing file {filename}: {str(e)}")
+            invalid_images.append(filename)
+
+print(f"Processed {len(valid_images)} valid images.")
+print(f"Found {len(invalid_images)} invalid images: {invalid_images}")
+
+import os
+os.remove('/content/drive/MyDrive/Date/ROIs2017_winter_lc_8_p840.tif')
+
+# REDIMENSIONAREA IMAGINILOR
+# specificați calea către folderul "Date"
+folder_path = "/content/drive/My Drive/Date"
+
+# specificați dimensiunile dorite ale imaginilor
+new_width = 512
+new_height = 512
+
+# parcurgeți toate fișierele TIFF din folderul "Date"
+for filename in os.listdir(folder_path):
+    if filename.endswith(".tif"):
+        # construiți calea către fișierul TIFF
+        file_path = os.path.join(folder_path, filename)
+
+        # deschideți fișierul TIFF și încărcați imaginea în obiectul Image
+        image = Image.open(file_path)
+
+        # redimensionați imaginea la dimensiunile dorite
+        image = image.resize((new_width, new_height))
+
+        # salvați imaginea redimensionată în același fișier TIFF
+        image.save(file_path)
+
+        print(f"Redimensionat {filename}")
+
+
+import os
+import numpy as np
+from osgeo import gdal
+
+import os
+import numpy as np
+from osgeo import gdal, gdal_array
+
+#NORMALIZARE
+
+data_path = '/content/drive/MyDrive/Date'
+new_size = (256, 256)
+
+for filename in os.listdir(data_path):
+    if filename.endswith('.tif'):
+        file_path = os.path.join(data_path, filename)
+        tiff = gdal.Open(file_path)
+
+        data = gdal_array.LoadFile(file_path)
+        data_2d = np.squeeze(data[:,:,0])
+        data_resized = np.array(Image.fromarray(data_2d).resize(new_size))
+
+        data_normalized = (data_resized - np.min(data_resized)) / (np.max(data_resized) - np.min(data_resized))
+
+        driver = gdal.GetDriverByName("GTiff")
+        out_tiff = driver.CreateCopy(file_path, tiff)
+        out_tiff.GetRasterBand(1).WriteArray(data_normalized)
+
+        print(f"Normalizat {filename}")
+
+
+import os
+import numpy as np
+from PIL import Image
+
+def get_label_from_filename(filename):
+    return filename.split('_')[0] # se extrage prima parte a numelui fișierului până la liniuța de sus
+
+!pip install rasterio
+
+import os
+
+
+def get_label_from_filename(filename):
+    return filename.split('_')[0]  # se extrage prima parte a numelui fișierului până la liniuța de sus
+
+
+# INCARCAREA IMAGINILOR SI ETICHETELE ASOCIATE LOR IN MEMORIE .
+data_path = '/content/drive/MyDrive/Date'
+image_size = (256, 256)
+
+images = []
+labels = []
+
+for filename in os.listdir(data_path):
+    if filename.endswith('.tif'):
+        image = Image.open(os.path.join(data_path, filename)).resize(image_size)
+        images.append(np.array(image))
+        labels.append(get_label_from_filename(filename))  # înlocuiți cu funcția voastră de extragere a etichetelor
+
+from sklearn.model_selection import train_test_split
+
+# împărțiți setul de date într-un set de date de antrenare și un set de date de testare, într-un raport de 80% și 20%, respectiv
+X_train, X_test, y_train, y_test = train_test_split(images, labels, test_size=0.2)
+
+from tensorflow import keras
+
+from tensorflow.keras.layers import Input, Conv2D, BatchNormalization, Activation, Add, AveragePooling2D, Flatten, Dense
+from tensorflow.keras.models import Model
+
+def ResNetBlock(inputs, num_filters, kernel_size, strides, activation='relu'):
+    x = Conv2D(num_filters, kernel_size=kernel_size, strides=strides, padding='same')(inputs)
+    x = BatchNormalization()(x)
+    x = Activation(activation)(x)
+
+    x = Conv2D(num_filters, kernel_size=kernel_size, strides=1, padding='same')(x)
+    x = BatchNormalization()(x)
+
+    if strides != 1 or inputs.shape[-1] != num_filters:
+        inputs = Conv2D(num_filters, kernel_size=1, strides=strides, padding='same')(inputs)
+        inputs = BatchNormalization()(inputs)
+
+    x = Add()([inputs, x])
+    x = Activation(activation)(x)
+
+    return x
+
+def ResNet(input_shape, num_classes, num_filters=64, kernel_size=3, strides=1, activation='relu'):
+    inputs = Input(shape=input_shape)
+
+    x = Conv2D(num_filters, kernel_size=kernel_size, strides=strides, padding='same')(inputs)
+    x = BatchNormalization()
+
+from tensorflow.keras.models import Model
+from tensorflow.keras.layers import Input, Dense, Dropout, Flatten, BatchNormalization, Activation, Concatenate
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, AveragePooling2D
+from tensorflow.keras.regularizers import l2
+from tensorflow.keras import backend as K
+
+def bn_relu(x):
+    x = BatchNormalization()(x)
+    x = Activation('relu')(x)
+    return x
+
+def dense_block(x, num_layers, growth_rate, name):
+    for i in range(num_layers):
+        bn1 = bn_relu(x)
+        conv1 = Conv2D(growth_rate, kernel_size=(3, 3), padding='same', kernel_initializer='he_normal', kernel_regularizer=l2(1e-4), name=name+'_conv_'+str(i)+'_1')(bn1)
+        drop1 = Dropout(0.2)(conv1)
+        concat = Concatenate()([x, drop1])
+        x = concat
+    return x
+
+def transition_block(x, reduction, name):
+    bn1 = bn_relu(x)
+    conv1 = Conv2D(int(K.int_shape(x)[-1] * reduction), kernel_size=(1, 1), padding='same', kernel_initializer='he_normal', kernel_regularizer=l2(1e-4), name=name+'_conv_1')(bn1)
+    drop1 = Dropout(0.2)(conv1)
+    pool1 = AveragePooling2D(pool_size=(2, 2), strides=(2, 2), padding='same', name=name+'_pool_1')(drop1)
+    return pool1
+
+def DenseNet(input_shape=(256, 256, 3), num_classes=4, num_filters=64, growth_rate=32, num_layers_per_block=[6, 12, 24, 16], reduction=0.5):
+    input_tensor = Input(shape=input_shape)
+
+    # Convolutional stem block
+    conv1 = Conv2D(num_filters, kernel_size=(7, 7), strides=(2, 2), padding='same', kernel_initializer='he_normal', kernel_regularizer=l2(1e-4), name='conv1')(input_tensor)
+    pool1 = MaxPooling2D(pool_size=(3, 3), strides=(2, 2), padding='same', name='pool1')(conv1)
+
+    # Dense blocks
+    x = pool1
+    for i, num_layers in enumerate(num_layers_per_block):
+        x = dense_block(x, num_layers, growth_rate, name='dense'+str(i+1))
+
+        if i != len(num_layers_per_block) - 1:
+            x = transition_block(x, reduction, name='trans'+str(i+1))
+
+    # Classification head
+    bn1 = bn_relu(x)
+    avg_pool = AveragePooling2D(pool_size=(7, 7), strides=(1, 1), padding='valid', name='avg_pool')(bn1)
+    flatten1 = Flatten()(avg_pool)
+    dense1 = Dense(num_classes, activation='softmax', kernel_initializer='he_normal', kernel_regularizer=l2(1e-4), name='dense')(flatten1)
+
+    model = Model(inputs=input_tensor, outputs=dense1)
+
+    return model
+
